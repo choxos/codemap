@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src https://api.github.com https://raw.githubusercontent.com; img-src 'self' data:; form-action 'self'; base-uri 'none'">
+<meta name="description" content="A zoomable map of any public GitHub repository: folders as nested boxes, every file drawn as code you can zoom into.">
+<title>codemap</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%2314171c'/%3E%3Crect x='2' y='2' width='7' height='12' fill='%2355c1b0'/%3E%3Crect x='10' y='2' width='4' height='5' fill='%23c792ea'/%3E%3Crect x='10' y='8' width='4' height='6' fill='%23f5d76e'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #14171c; --panel: #1b1f26; --line: #2a303a; --text: #d6dbe3; --muted: #8b94a3;
+    --accent: #f5d76e; --link: #82aaff; --focus: #4f7cff; --error: #ff9b8a;
+    --font: "IBM Plex Sans", "Inter", system-ui, -apple-system, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text); font: 13px/1.4 var(--font); overflow: hidden; }
+  a { color: var(--link); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  input { background: #11141a; color: var(--text); border: 1px solid var(--line); border-radius: 5px; padding: 4px 8px; font: 13px var(--mono); outline: none; }
+  input:focus { border-color: var(--focus); }
+  button { background: #262c36; color: var(--text); border: 1px solid var(--line); border-radius: 5px; padding: 3px 9px; font: inherit; cursor: pointer; }
+  button:hover { background: #303845; }
+  button.on { border-color: var(--focus); box-shadow: inset 0 0 0 1px var(--focus); }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+  #top { height: 38px; display: flex; align-items: center; gap: 8px; padding: 0 10px; background: var(--panel); border-bottom: 1px solid var(--line); overflow-x: auto; }
+  #top > * { flex: 0 0 auto; }
+  #top .brand { font-weight: 600; color: var(--text); margin-right: 4px; }
+  #go, #tools { display: flex; gap: 6px; }
+  #repo { width: 280px; }
+  #status { flex: 1 1 auto; min-width: 0; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: var(--mono); font-size: 12px; }
+  #meta { color: var(--muted); white-space: nowrap; font-size: 12px; }
+  #main { position: absolute; top: 38px; left: 0; right: 0; bottom: 0; display: flex; }
+  #stage { flex: 1; position: relative; overflow: hidden; perspective: 1100px;
+    background: repeating-conic-gradient(#171a20 0 25%, #14171c 0 50%) 0 0 / 24px 24px; }
+  #stage canvas { position: absolute; inset: 0; display: block; touch-action: none; transform-origin: 50% 40%; transition: transform .45s ease; }
+  #stage.tilt canvas { transform: rotateX(50deg) rotateZ(-20deg) scale(1.45); }
+  #panel { position: absolute; left: 50%; top: 45%; transform: translate(-50%, -50%); width: min(580px, calc(100% - 32px)); max-height: calc(100% - 32px); overflow: auto;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 18px 20px; }
+  #panel h1 { font-size: 18px; margin: 0 0 10px; }
+  #panel p { margin: 0 0 10px; }
+  #panel .small { color: var(--muted); font-size: 12px; }
+  #msg { font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
+  #msg.err { color: var(--error); font: 13px/1.4 var(--font); }
+  #bar { display: block; width: 100%; margin: 8px 0 4px; accent-color: var(--focus); }
+  #more { margin: 8px 0 0; font-size: 12.5px; }
+  #more div { padding: 1px 0; }
+  #more a { font-family: var(--mono); }
+  #more span { color: var(--muted); }
+  #tok { margin-top: 12px; }
+  #tok summary { cursor: pointer; color: var(--muted); }
+  #tokform { display: flex; gap: 6px; }
+  #token { flex: 1; min-width: 0; }
+  #hint { position: absolute; left: 8px; bottom: 6px; color: var(--muted); font-size: 11px; pointer-events: none; background: rgba(12,14,18,0.8); padding: 2px 6px; border-radius: 4px; }
+  #side { width: 320px; background: var(--panel); border-left: 1px solid var(--line); display: flex; flex-direction: column; min-width: 0; }
+  .tabs { display: flex; border-bottom: 1px solid var(--line); }
+  .tabs button { flex: 0 0 auto; background: none; border: 0; border-radius: 0; border-bottom: 2px solid transparent; color: var(--muted); padding: 8px 12px; }
+  .tabs button.on { color: var(--text); border-bottom-color: var(--focus); box-shadow: none; }
+  .tab { padding: 10px 12px; overflow: auto; flex: 1; min-height: 0; }
+  #inspector .name { font-weight: 600; word-break: break-all; }
+  #inspector .name span { color: var(--muted); font-weight: 400; }
+  #inspector .path { color: var(--muted); font-family: var(--mono); font-size: 11.5px; word-break: break-all; margin: 4px 0 8px; }
+  #inspector .row { font-size: 12.5px; margin: 2px 0; }
+  #inspector .muted { color: var(--muted); }
+  #inspector pre { margin: 8px 0 0; padding: 6px 8px; background: #11141a; border: 1px solid var(--line); border-radius: 4px; font: 11.5px/1.4 var(--mono); white-space: pre-wrap; word-break: break-all; color: #c9d1d9; }
+  #inspector ul { margin: 6px 0 0; padding-left: 0; list-style: none; }
+  #inspector li { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; padding: 1px 0; cursor: pointer; }
+  #inspector li:hover { color: #fff; }
+  #inspector li em { font-style: normal; word-break: break-all; }
+  #inspector li span { color: var(--muted); font-family: var(--mono); font-size: 11px; white-space: nowrap; }
+  #q { width: 100%; padding: 6px 8px; }
+  #qcount { color: var(--muted); font-size: 12px; margin: 6px 0; }
+  #results { font-size: 12px; }
+  #results .file { color: var(--text); font-family: var(--mono); font-size: 11.5px; padding: 6px 0 2px; word-break: break-all; display: flex; justify-content: space-between; gap: 8px; cursor: pointer; }
+  #results .file:hover { color: #fff; }
+  #results .file b { color: var(--muted); font-weight: 400; }
+  #results .hit { display: flex; gap: 8px; padding: 2px 4px; border-radius: 3px; cursor: pointer; font-family: var(--mono); font-size: 11.5px; white-space: nowrap; overflow: hidden; }
+  #results .hit:hover, #results .hit.on { background: #262c36; }
+  #results .hit .ln { color: var(--muted); flex: 0 0 3.5em; text-align: right; }
+  #results .hit .tx { overflow: hidden; text-overflow: ellipsis; color: #aeb7c4; }
+  #results mark { background: #5a4b00; color: #ffe27a; border-radius: 2px; }
+  #results .more { color: var(--muted); padding: 6px 4px; }
+  kbd { font: 11px var(--mono); background: #262c36; border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
+  @media (max-width: 720px) {
+    #status, #meta, #hint { display: none; }
+    #repo { width: 150px; }
+    #main { flex-direction: column; }
+    #side { width: auto; height: 40%; border-left: 0; border-top: 1px solid var(--line); }
+  }
+</style>
+</head>
+<body>
+<div id="top">
+  <a class="brand" href="./">codemap</a>
+  <form id="go" method="get">
+    <input id="repo" name="repo" placeholder="owner/repo or GitHub URL" aria-label="GitHub repository" spellcheck="false" autocomplete="off" autocapitalize="off" required>
+    <button>Map</button>
+  </form>
+  <span id="tools" hidden>
+    <button id="btn-fit" type="button" title="Fit the whole map (Home)">Fit</button>
+    <button id="btn-labels" type="button" class="on" title="Show folder and file names">Labels</button>
+    <button id="btn-scopes" type="button" class="on" title="Outline code blocks inside files">Scopes</button>
+    <button id="btn-tilt" type="button" title="Tilt the map (view only)">3D</button>
+  </span>
+  <span id="status"></span>
+  <span id="meta"></span>
+</div>
+<div id="main">
+  <div id="stage">
+    <canvas id="c" role="img" aria-label="Zoomable map of the repository; the inspector and search list the same files as text"></canvas>
+    <div id="panel">
+      <div id="intro">
+        <h1>Map any GitHub repository</h1>
+        <p>codemap draws every source file of a public repository as one zoomable map. Folders become nested boxes sized by lines of code, and each file becomes a texture of its own code that sharpens into syntax colored text as you zoom in.</p>
+        <p>Try <a href="?repo=choxos/mlumr">choxos/mlumr</a>, <a href="?repo=expressjs/express">expressjs/express</a>, <a href="?repo=pallets/flask">pallets/flask</a>, <a href="?repo=BurntSushi/ripgrep">BurntSushi/ripgrep</a>, <a href="?repo=tidyverse/dplyr">tidyverse/dplyr</a>, or <a href="?repo=microsoft/vscode">microsoft/vscode</a>, which is too big to load whole and lets you pick a folder.</p>
+        <p class="small">Files go straight from GitHub to your browser; nothing is uploaded or stored anywhere else.</p>
+        <noscript><p>codemap needs JavaScript.</p></noscript>
+      </div>
+      <div id="msg" role="status" aria-live="polite"></div>
+      <progress id="bar" max="1" hidden></progress>
+      <div id="more"></div>
+      <details id="tok">
+        <summary>GitHub token (optional)</summary>
+        <p class="small">Each map costs two GitHub API requests, and GitHub allows 60 an hour per network without a token. A fine-grained token with no extra permissions raises that to 5,000. It is saved in this browser's storage for this site, which other pages on the same github.io domain can read, and is sent only to api.github.com.</p>
+        <form id="tokform"><input id="token" type="password" autocomplete="off" aria-label="GitHub token"><button>Save</button></form>
+      </details>
+    </div>
+    <div id="hint" hidden>scroll to zoom · drag to pan · double click to zoom into a box · <kbd>/</kbd> search · <kbd>Home</kbd> fit</div>
+  </div>
+  <div id="side" hidden>
+    <div class="tabs">
+      <button type="button" data-tab="inspector" class="on">Inspector</button>
+      <button type="button" data-tab="search">Search</button>
+    </div>
+    <div id="inspector" class="tab"></div>
+    <div id="search" class="tab" hidden>
+      <input id="q" placeholder="search all source (case insensitive)" aria-label="Search all source" spellcheck="false" autocomplete="off">
+      <div id="qcount"></div>
+      <div id="results"></div>
+    </div>
+  </div>
+</div>
+<script src="loader.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
